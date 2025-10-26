@@ -27,50 +27,157 @@ bool showSplash = true;
 
 int breakout()
 {
-    // --- Game parameters ---
+    // --- Base Game Parameters ---
     const int paddleWidth = 20;
     const int paddleHeight = 3;
-    int paddleX = (SCREEN_WIDTH - paddleWidth) / 2;
     const int paddleY = SCREEN_HEIGHT - paddleHeight - 1;
-
-    float ballX = SCREEN_WIDTH / 2;
-    float ballY = SCREEN_HEIGHT / 2;
-    float ballVX = 2;
-    float ballVY = -2;
     const int ballSize = 2;
-
-    // Bricks
-    const int brickRows = 3;
+    const int baseBrickRows = 3;
     const int brickCols = 8;
     const int brickWidth = SCREEN_WIDTH / brickCols;
     const int brickHeight = 5;
-    bool bricks[brickRows][brickCols];
-    for (int r = 0; r < brickRows; r++)
-        for (int c = 0; c < brickCols; c++)
-            bricks[r][c] = true;
-
-    int score = 0;
-    unsigned long lastFrame = 0;
     const int frameDelay = 33; // ~30 FPS
 
-    // --- Countdown phase ---
-    unsigned long startTime = millis();
-    int lastSecondShown = -1;
+    int stage = 1;
+    int score = 0;
 
-    while (millis() - startTime < 3000)
-    { // 3 seconds total
-        // Paddle movement allowed
-        if (digitalRead(buttonX) == LOW && paddleX > 0)
-            paddleX -= 3;
-        if (digitalRead(buttonY) == LOW && paddleX + paddleWidth < SCREEN_WIDTH)
-            paddleX += 3;
+    while (true)
+    {
+        // --- Stage Setup ---
+        int paddleX = (SCREEN_WIDTH - paddleWidth) / 2;
+        float ballX = SCREEN_WIDTH / 2;
+        float ballY = SCREEN_HEIGHT / 2;
+        float ballVX = 2 * stage * 0.6;
+        float ballVY = -2 * stage * 0.6;
 
-        int secondsLeft = 3 - ((millis() - startTime) / 1000);
-        if (secondsLeft != lastSecondShown)
+        int brickRows = baseBrickRows + (stage - 1);
+        if (brickRows > 5)
+            brickRows = 5; // limit to screen height
+
+        bool bricks[5][brickCols]; // max possible rows = 5
+        for (int r = 0; r < brickRows; r++)
+            for (int c = 0; c < brickCols; c++)
+                bricks[r][c] = true;
+
+        unsigned long lastFrame = 0;
+        bool stageCleared = false;
+
+        // --- Countdown phase ---
+        unsigned long startTime = millis();
+        int lastSecondShown = -1;
+        while (millis() - startTime < 3000)
         {
-            lastSecondShown = secondsLeft;
+            int secondsLeft = 3 - ((millis() - startTime) / 1000);
+            if (secondsLeft != lastSecondShown)
+            {
+                lastSecondShown = secondsLeft;
 
-            // Draw field
+                display.clearDisplay();
+                // Bricks
+                for (int r = 0; r < brickRows; r++)
+                {
+                    for (int c = 0; c < brickCols; c++)
+                    {
+                        if (bricks[r][c])
+                            display.fillRect(c * brickWidth, r * brickHeight + 5,
+                                             brickWidth - 1, brickHeight - 1, SSD1306_WHITE);
+                    }
+                }
+                // Paddle
+                display.fillRect(paddleX, paddleY, paddleWidth, paddleHeight, SSD1306_WHITE);
+                // Ball (stationary)
+                display.fillRect((int)ballX, (int)ballY, ballSize, ballSize, SSD1306_WHITE);
+                // Countdown text
+                display.setTextSize(1);
+                display.setTextColor(SSD1306_WHITE);
+                display.setCursor(SCREEN_WIDTH - 12, 0);
+                display.print(secondsLeft);
+                display.display();
+            }
+            delay(10);
+        }
+
+        // --- Main Stage Loop ---
+        while (true)
+        {
+            unsigned long now = millis();
+            if (now - lastFrame < frameDelay)
+                continue;
+            lastFrame = now;
+
+            // Input
+            if (digitalRead(buttonX) == LOW && paddleX > 0)
+                paddleX -= 3;
+            if (digitalRead(buttonY) == LOW && paddleX + paddleWidth < SCREEN_WIDTH)
+                paddleX += 3;
+
+            // Ball physics
+            ballX += ballVX;
+            ballY += ballVY;
+
+            // Wall collisions
+            if (ballX <= 0 || ballX + ballSize >= SCREEN_WIDTH)
+                ballVX = -ballVX;
+            if (ballY <= 0)
+                ballVY = -ballVY;
+
+            // Paddle collision
+            if (ballY + ballSize >= paddleY &&
+                ballX + ballSize >= paddleX &&
+                ballX <= paddleX + paddleWidth)
+            {
+                ballVY = -ballVY;
+                float hitPos = (ballX + ballSize / 2.0 - (paddleX + paddleWidth / 2.0)) / (paddleWidth / 2.0);
+                ballVX = hitPos * 2.5;
+            }
+
+            // Brick collision
+            int remainingBricks = 0;
+            for (int r = 0; r < brickRows; r++)
+            {
+                for (int c = 0; c < brickCols; c++)
+                {
+                    if (!bricks[r][c])
+                        continue;
+                    int bx = c * brickWidth;
+                    int by = r * brickHeight + 5;
+                    if (ballX + ballSize > bx && ballX < bx + brickWidth &&
+                        ballY + ballSize > by && ballY < by + brickHeight)
+                    {
+                        bricks[r][c] = false;
+                        score++;
+                        ballVY = -ballVY;
+                    }
+                    if (bricks[r][c])
+                        remainingBricks++;
+                }
+            }
+
+            // Check stage clear
+            if (remainingBricks == 0)
+            {
+                stageCleared = true;
+                break;
+            }
+
+            // Game over
+            if (ballY > SCREEN_HEIGHT)
+            {
+                // --- Game Over ---
+                display.clearDisplay();
+                display.setTextSize(1);
+                display.setTextColor(SSD1306_WHITE);
+                display.setCursor(35, 10);
+                display.print("GAME OVER");
+                display.setCursor(30, 22);
+                display.print("Score:");
+                display.print(score);
+                display.display();
+                delay(1000);
+                return score;
+            }
+
+            // --- Draw ---
             display.clearDisplay();
 
             // Bricks
@@ -86,118 +193,40 @@ int breakout()
 
             // Paddle
             display.fillRect(paddleX, paddleY, paddleWidth, paddleHeight, SSD1306_WHITE);
-
-            // Ball (stationary)
+            // Ball
             display.fillRect((int)ballX, (int)ballY, ballSize, ballSize, SSD1306_WHITE);
 
-            // Countdown text (top-right corner)
+            // HUD
             display.setTextSize(1);
             display.setTextColor(SSD1306_WHITE);
-            display.setCursor(SCREEN_WIDTH - 12, 0);
-            display.print(secondsLeft);
+            display.setCursor(SCREEN_WIDTH - 35, 0);
+            display.print("S:");
+            display.print(score);
+            display.setCursor(0, 0);
+            display.print("L:");
+            display.print(stage);
 
             display.display();
         }
 
-        delay(10); // Smooth paddle motion during countdown
+        // --- Stage Cleared! ---
+        if (stageCleared)
+        {
+            display.clearDisplay();
+            display.setTextSize(1);
+            display.setTextColor(SSD1306_WHITE);
+            display.setCursor(20, 10);
+            display.print("Stage ");
+            display.print(stage);
+            display.print(" Cleared!");
+            display.setCursor(25, 22);
+            display.print("Next up...");
+            display.display();
+            delay(1000);
+
+            stage++; // next stage
+        }
     }
-
-    // --- Main game loop ---
-    while (true)
-    {
-        unsigned long now = millis();
-        if (now - lastFrame < frameDelay)
-            continue;
-        lastFrame = now;
-
-        // --- Input ---
-        if (digitalRead(buttonX) == LOW && paddleX > 0)
-            paddleX -= 3;
-        if (digitalRead(buttonY) == LOW && paddleX + paddleWidth < SCREEN_WIDTH)
-            paddleX += 3;
-
-        // --- Ball physics ---
-        ballX += ballVX;
-        ballY += ballVY;
-
-        // Wall collisions
-        if (ballX <= 0 || ballX + ballSize >= SCREEN_WIDTH)
-            ballVX = -ballVX;
-        if (ballY <= 0)
-            ballVY = -ballVY;
-
-        // Paddle collision
-        if (ballY + ballSize >= paddleY && ballX + ballSize >= paddleX && ballX <= paddleX + paddleWidth)
-        {
-            ballVY = -ballVY;
-            float hitPos = (ballX + ballSize / 2.0 - (paddleX + paddleWidth / 2.0)) / (paddleWidth / 2.0);
-            ballVX = hitPos * 2.5;
-        }
-
-        // Brick collision
-        for (int r = 0; r < brickRows; r++)
-        {
-            for (int c = 0; c < brickCols; c++)
-            {
-                if (!bricks[r][c])
-                    continue;
-                int bx = c * brickWidth;
-                int by = r * brickHeight + 5;
-                if (ballX + ballSize > bx && ballX < bx + brickWidth && ballY + ballSize > by && ballY < by + brickHeight)
-                {
-                    bricks[r][c] = false;
-                    score++;
-                    ballVY = -ballVY;
-                }
-            }
-        }
-
-        // Game over
-        if (ballY > SCREEN_HEIGHT)
-            break;
-
-        // --- Drawing ---
-        display.clearDisplay();
-
-        // Bricks
-        for (int r = 0; r < brickRows; r++)
-        {
-            for (int c = 0; c < brickCols; c++)
-            {
-                if (bricks[r][c])
-                    display.fillRect(c * brickWidth, r * brickHeight + 5,
-                                     brickWidth - 1, brickHeight - 1, SSD1306_WHITE);
-            }
-        }
-
-        // Paddle
-        display.fillRect(paddleX, paddleY, paddleWidth, paddleHeight, SSD1306_WHITE);
-
-        // Ball
-        display.fillRect((int)ballX, (int)ballY, ballSize, ballSize, SSD1306_WHITE);
-
-        // Score
-        display.setTextSize(1);
-        display.setTextColor(SSD1306_WHITE);
-        display.setCursor(SCREEN_WIDTH - 30, 0);
-        display.print(score);
-
-        display.display();
-    }
-
-    // --- Game Over ---
-    display.clearDisplay();
-    display.setTextSize(1);
-    display.setTextColor(SSD1306_WHITE);
-    display.setCursor(40, 10);
-    display.print("GAME OVER");
-    display.setCursor(40, 20);
-    display.print("Score:");
-    display.print(score);
-    display.display();
-    delay(1000);
-
-    return score;
 }
 
 int dino()
@@ -207,12 +236,30 @@ int dino()
     int velocity = 0;
     bool jumping = false;
 
-    int obstacleX = SCREEN_WIDTH;
-    int obstacleWidth = 6;
-    int obstacleHeight = 8;
+    // Multiple obstacles with random sizes and spawn intervals
+    const int maxObstacles = 3;
+    struct Obstacle
+    {
+        int x;
+        int w;
+        int h;
+        bool active;
+    };
+    Obstacle obstacles[maxObstacles];
+    for (int i = 0; i < maxObstacles; i++)
+    {
+        obstacles[i].active = false;
+    }
 
     unsigned long lastFrame = 0;
     const int frameDelay = 33; // ~30 FPS
+
+    // Spawn timing (ms)
+    unsigned long lastSpawn = millis();
+    long spawnInterval = random(500, 1400); // first spawn delay
+
+    // base speed; can scale with score for difficulty
+    int baseSpeed = 4;
 
     // pre-load screen
     display.clearDisplay();
@@ -254,18 +301,52 @@ int dino()
             }
         }
 
-        // --- Obstacle movement ---
-        obstacleX -= 4;
-        if (obstacleX + obstacleWidth < 0)
+        // --- Spawn logic ---
+        if ((long)(now - lastSpawn) >= spawnInterval)
         {
-            obstacleX = SCREEN_WIDTH + random(10, 40);
-            score++;
+            // find free slot
+            for (int i = 0; i < maxObstacles; i++)
+            {
+                if (!obstacles[i].active)
+                {
+                    obstacles[i].active = true;
+                    obstacles[i].x = SCREEN_WIDTH + random(0, 24);
+                    obstacles[i].w = random(4, 9);  // 4..8 px width
+                    obstacles[i].h = random(6, 13); // 6..12 px height
+                    break;
+                }
+            }
+            lastSpawn = now;
+            spawnInterval = random(500, 1400);
         }
 
-        // --- Collision detection ---
-        if (obstacleX < 10 && obstacleX + obstacleWidth > 2 && dinoY > GROUND_Y - obstacleHeight)
+        // speed can increase slightly with score
+        int obstacleSpeed = baseSpeed + score / 6;
+
+        // --- Move obstacles and check collisions ---
+        for (int i = 0; i < maxObstacles; i++)
         {
-            break; // game over
+            if (!obstacles[i].active)
+                continue;
+
+            obstacles[i].x -= obstacleSpeed;
+
+            // off-screen -> deactivate and award point
+            if (obstacles[i].x + obstacles[i].w < 0)
+            {
+                obstacles[i].active = false;
+                score++;
+                continue;
+            }
+
+            // --- Collision detection ---
+            // Dino occupies x from 2..9 and y from (dinoY-8)..dinoY
+            if (obstacles[i].x < 10 && obstacles[i].x + obstacles[i].w > 2 && dinoY > GROUND_Y - obstacles[i].h)
+            {
+                // collision -> game over
+                // fall out of main loop
+                goto DINO_GAME_OVER;
+            }
         }
 
         // --- Drawing ---
@@ -277,8 +358,13 @@ int dino()
         // Dino (8×8)
         display.fillRect(2, dinoY - 8, 8, 8, SSD1306_WHITE);
 
-        // Obstacle
-        display.fillRect(obstacleX, GROUND_Y - obstacleHeight, obstacleWidth, obstacleHeight, SSD1306_WHITE);
+        // Obstacles
+        for (int i = 0; i < maxObstacles; i++)
+        {
+            if (!obstacles[i].active)
+                continue;
+            display.fillRect(obstacles[i].x, GROUND_Y - obstacles[i].h, obstacles[i].w, obstacles[i].h, SSD1306_WHITE);
+        }
 
         // Score
         display.setTextSize(1);
@@ -289,6 +375,7 @@ int dino()
         display.display();
     }
 
+DINO_GAME_OVER:;
     // --- Game Over screen ---
     display.clearDisplay();
     display.setTextSize(1);
@@ -300,7 +387,7 @@ int dino()
     display.print(score);
     display.display();
 
-    delay(1500);
+    delay(750);
     return score;
 }
 
@@ -428,7 +515,7 @@ int flappyBird()
     const int BIRD_X = 20;
     const int PIPE_WIDTH = 10;
     const int GAP_HEIGHT = 14;
-    const float GRAVITY = 0.25;
+    const float GRAVITY = 0.10;
     const float FLAP_STRENGTH = -2.8;
 
     float birdY = 16;
@@ -517,9 +604,303 @@ int flappyBird()
     return score;
 }
 
+int tetris()
+{
+    // Logical board (portrait mode: tall, narrow)
+    const int COLS = 6;  // horizontal cells (fits into 32px)
+    const int ROWS = 12; // vertical cells (fits into 128px)
+    const int CELL = 5;  // cell size in pixels
+
+    // Screen constants (existing globals)
+    const int D_SCR_W = SCREEN_WIDTH;  // 128
+    const int D_SCR_H = SCREEN_HEIGHT; // 32
+
+    // Compute drawing offsets so the rotated playfield is centered
+    const int playW = COLS * CELL;                     // <= 32
+    const int playH = ROWS * CELL;                     // <= 128
+    const int yOffset = max(0, (D_SCR_H - playW) / 2); // maps to display Y
+    const int xOffset = max(0, (D_SCR_W - playH) / 2); // maps to display X
+
+    int grid[ROWS][COLS] = {0};
+
+    struct Piece
+    {
+        int shape[4][4];
+        int size;
+    };
+    Piece pieces[7] = {
+        {{{1, 1, 1, 1}, {0}}, 4},    // I
+        {{{1, 1, 1}, {0, 1, 0}}, 3}, // T
+        {{{1, 1, 0}, {0, 1, 1}}, 3}, // S
+        {{{0, 1, 1}, {1, 1, 0}}, 3}, // Z
+        {{{1, 1}, {1, 1}}, 2},       // O
+        {{{1, 0, 0}, {1, 1, 1}}, 3}, // L
+        {{{0, 0, 1}, {1, 1, 1}}, 3}  // J
+    };
+
+    int px, py, ptype, rot;
+    unsigned long lastFall = 0;
+    int fallDelay = 600;
+    int score = 0;
+
+    auto newPiece = [&]()
+    {
+        ptype = random(0, 7);
+        rot = 180;
+        px = COLS / 2 - 1; // center-ish horizontally (in columns)
+        py = -1;           // start just above the visible area
+    };
+
+    // Check if a piece (ptype) at (nx,ny) with rotation nr fits
+    auto canMove = [&](int nx, int ny, int nr)
+    {
+        Piece p = pieces[ptype];
+        for (int y = 0; y < p.size; y++)
+        {
+            for (int x = 0; x < p.size; x++)
+            {
+                int val = 0;
+                switch (nr & 3)
+                {
+                case 0:
+                    val = p.shape[y][x];
+                    break;
+                case 1:
+                    val = p.shape[p.size - 1 - x][y];
+                    break;
+                case 2:
+                    val = p.shape[p.size - 1 - y][p.size - 1 - x];
+                    break;
+                case 3:
+                    val = p.shape[x][p.size - 1 - y];
+                    break;
+                }
+                if (!val)
+                    continue;
+                int gx = nx + x;
+                int gy = ny + y;
+                if (gx < 0 || gx >= COLS)
+                    return false;
+                if (gy >= ROWS)
+                    return false;
+                if (gy >= 0 && grid[gy][gx])
+                    return false;
+            }
+        }
+        return true;
+    };
+
+    auto placePiece = [&]()
+    {
+        Piece p = pieces[ptype];
+        for (int y = 0; y < p.size; y++)
+        {
+            for (int x = 0; x < p.size; x++)
+            {
+                int val = 0;
+                switch (rot & 3)
+                {
+                case 0:
+                    val = p.shape[y][x];
+                    break;
+                case 1:
+                    val = p.shape[p.size - 1 - x][y];
+                    break;
+                case 2:
+                    val = p.shape[p.size - 1 - y][p.size - 1 - x];
+                    break;
+                case 3:
+                    val = p.shape[x][p.size - 1 - y];
+                    break;
+                }
+                if (val)
+                {
+                    int gx = px + x;
+                    int gy = py + y;
+                    if (gy >= 0 && gy < ROWS && gx >= 0 && gx < COLS)
+                        grid[gy][gx] = 1;
+                }
+            }
+        }
+    };
+
+    auto clearLines = [&]()
+    {
+        int lines = 0;
+        for (int y = ROWS - 1; y >= 0; y--)
+        {
+            bool full = true;
+            for (int x = 0; x < COLS; x++)
+                if (!grid[y][x])
+                    full = false;
+            if (full)
+            {
+                for (int yy = y; yy > 0; yy--)
+                    for (int x = 0; x < COLS; x++)
+                        grid[yy][x] = grid[yy - 1][x];
+                for (int x = 0; x < COLS; x++)
+                    grid[0][x] = 0;
+                lines++;
+                y++; // re-check same row index after pull-down
+            }
+        }
+        score += lines * 10;
+        // speed up slightly every few lines
+        if (fallDelay > 120 && lines)
+            fallDelay = max(120, fallDelay - lines * 10);
+    };
+
+    // Helper to draw one logical cell at (col, row) onto rotated screen.
+    auto drawCell = [&](int col, int row)
+    {
+        // col: 0..COLS-1 -> maps to display Y
+        // row: 0..ROWS-1 -> maps to display X
+        int dx = xOffset + row * CELL; // across the long axis (uses display X: 0..127)
+        int dy = yOffset + col * CELL; // narrow axis (uses display Y: 0..31)
+        display.fillRect(dx + 1, dy + 1, CELL - 1, CELL - 1, SSD1306_WHITE);
+    };
+
+    newPiece();
+    lastFall = millis();
+
+    while (true)
+    {
+        // --- INPUT (button layout provided)
+        // A = left, B = right, X = rotate, Y = soft/drop
+        if (digitalRead(buttonA) == LOW)
+        {
+            if (canMove(px - 1, py, rot))
+            {
+                px--;
+                delay(120);
+            }
+        }
+        if (digitalRead(buttonB) == LOW)
+        {
+            if (canMove(px + 1, py, rot))
+            {
+                px++;
+                delay(120);
+            }
+        }
+        if (digitalRead(buttonX) == LOW)
+        {
+            if (canMove(px, py, rot + 1))
+            {
+                rot++;
+                delay(150);
+            }
+        }
+        bool dropping = (digitalRead(buttonY) == LOW);
+
+        // --- FALL timing
+        unsigned long now = millis();
+        if (now - lastFall > (dropping ? 80 : fallDelay))
+        {
+            if (canMove(px, py + 1, rot))
+            {
+                py++;
+            }
+            else
+            {
+                // place and spawn next piece
+                placePiece();
+                clearLines();
+                newPiece();
+                if (!canMove(px, py, rot))
+                    break; // game over (spawn blocked)
+            }
+            lastFall = now;
+        }
+
+        // --- DRAW ---
+        display.clearDisplay();
+
+        // Draw settled blocks (grid)
+        for (int r = 0; r < ROWS; r++)
+        {
+            for (int c = 0; c < COLS; c++)
+            {
+                if (grid[r][c])
+                    drawCell(c, r);
+            }
+        }
+
+        // Draw active piece
+        Piece p = pieces[ptype];
+        for (int y = 0; y < p.size; y++)
+        {
+            for (int x = 0; x < p.size; x++)
+            {
+                int val = 0;
+                switch (rot & 3)
+                {
+                case 0:
+                    val = p.shape[y][x];
+                    break;
+                case 1:
+                    val = p.shape[p.size - 1 - x][y];
+                    break;
+                case 2:
+                    val = p.shape[p.size - 1 - y][p.size - 1 - x];
+                    break;
+                case 3:
+                    val = p.shape[x][p.size - 1 - y];
+                    break;
+                }
+                if (val)
+                {
+                    int gx = px + x;
+                    int gy = py + y;
+                    if (gy >= 0 && gy < ROWS && gx >= 0 && gx < COLS)
+                        drawCell(gx, gy);
+                }
+            }
+        }
+
+        // Draw a thin frame around the playfield (rotated)
+        // top-left corner in display coords:
+        int frameX = xOffset;
+        int frameY = yOffset;
+        int frameW = playH;
+        int frameH = playW;
+        display.drawRect(frameX, frameY, frameW, frameH, SSD1306_WHITE);
+
+        // HUD: Score (render in normal orientation at top-left of the raw display)
+        display.setTextSize(1);
+        display.setTextColor(SSD1306_WHITE);
+        display.setCursor(0, 0);
+        display.print("S:");
+        display.print(score);
+
+        display.display();
+        delay(40); // main loop throttle
+    }
+
+    // --- GAME OVER ---
+    display.clearDisplay();
+    display.setTextSize(1);
+    display.setTextColor(SSD1306_WHITE);
+    display.setCursor(10, 10);
+    display.print("GAME OVER");
+    display.setCursor(10, 22);
+    display.print("Score:");
+    display.print(score);
+    display.display();
+    delay(1500);
+
+    return score;
+}
+
 int showMenu()
 {
-    const char *games[] = {"Breakout", "Dino", "Snake", "Flappy"};
+    const char *games[] = {
+        "Breakout",
+        "Dino",
+        "Snake",
+        "Tetris",
+        "Flappy",
+    };
     const int gameCount = sizeof(games) / sizeof(games[0]);
     int selected = 0;
     int scrollOffset = 0;       // topmost visible index
@@ -549,11 +930,13 @@ int showMenu()
         if (digitalRead(buttonX) == LOW)
         { // go to splash
             showSplash = true;
+            delay(150);
             return -1;
         }
         if (digitalRead(buttonY) == LOW)
         { // confirm game
             showSplash = false;
+            delay(150);
             return selected;
         }
 
@@ -668,8 +1051,10 @@ void loop()
             snake();
             break;
         case 3:
-            flappyBird();
+            tetris();
             break;
+        case 4:
+            flappyBird();
         default:
             Serial.println("No game loaded.");
             break;
